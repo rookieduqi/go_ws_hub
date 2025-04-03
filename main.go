@@ -3,13 +3,13 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"log"
-	"net/http"
-	"sync"
-	"time"
-
 	"github.com/gorilla/websocket"
 	"github.com/labstack/echo/v4"
+	"log"
+	"net/http"
+	"strings"
+	"sync"
+	"time"
 )
 
 // -----------------------
@@ -17,11 +17,10 @@ import (
 // -----------------------
 
 type WebSocketMessage struct {
-	Type      string      `json:"type"`                 // "request", "response", "notify", "ping", "pong"
-	RequestID string      `json:"request_id,omitempty"` // 请求ID
-	Action    string      `json:"action"`               // 操作，比如 "download"
-	Data      interface{} `json:"data,omitempty"`       // 消息数据
-	Timestamp int64       `json:"timestamp"`            // 时间戳
+	Type      string      `json:"t"`           // "request", "response", "notify", "ping", "pong"
+	RequestID string      `json:"r,omitempty"` // 请求ID
+	Action    string      `json:"a"`           // 操作，比如 "download"
+	Data      interface{} `json:"d,omitempty"` // 消息数据
 }
 
 const (
@@ -30,6 +29,8 @@ const (
 	MessageTypeNotify   = "notify"
 	MessageTypePing     = "ping"
 	MessageTypePong     = "pong"
+	MessageTypeLocal    = "local"
+	MessageTypeRemote   = "remote"
 )
 
 // -----------------------
@@ -46,41 +47,22 @@ var upgrader = websocket.Upgrader{
 
 type wsClientConn struct {
 	conn *websocket.Conn
-	send chan *WebSocketMessage
+	send chan []byte
 }
 
 func (c *wsClientConn) writePump() {
-	ticker := time.NewTicker(3 * time.Second)
-	defer func() {
-		ticker.Stop()
-		c.conn.Close()
-	}()
+	defer c.conn.Close()
 	for {
-		select {
-		case msg, ok := <-c.send:
-			if !ok {
-				_ = c.conn.WriteMessage(websocket.CloseMessage, []byte{})
-				return
-			}
-			data, err := json.Marshal(msg)
-			if err != nil {
-				log.Println("Client marshal error:", err)
-				continue
-			}
+		msg, ok := <-c.send
+		if !ok {
+			_ = c.conn.WriteMessage(websocket.CloseMessage, []byte{})
+			return
+		}
 
-			_ = c.conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
-			if err := c.conn.WriteMessage(websocket.TextMessage, data); err != nil {
-				log.Println("Client write error:", err)
-				return
-			}
-		case <-ticker.C:
-
-			// 定期发送 Ping 消息
-			_ = c.conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
-			if err := c.conn.WriteMessage(websocket.PingMessage, []byte("ping")); err != nil {
-				log.Println("Client ping error:", err)
-				return
-			}
+		//_ = c.conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
+		if err := c.conn.WriteMessage(websocket.TextMessage, msg); err != nil {
+			log.Println("Client write error:", err)
+			return
 		}
 	}
 }
@@ -91,39 +73,21 @@ func (c *wsClientConn) writePump() {
 
 type wsAgentConn struct {
 	conn *websocket.Conn
-	send chan *WebSocketMessage
+	send chan []byte
 }
 
 func (a *wsAgentConn) writePump() {
-	ticker := time.NewTicker(30 * time.Second)
-	defer func() {
-		ticker.Stop()
-		a.conn.Close()
-	}()
+	defer a.conn.Close()
 	for {
-		select {
-		case msg, ok := <-a.send:
-			if !ok {
-				a.conn.WriteMessage(websocket.CloseMessage, []byte{})
-				return
-			}
-			data, err := json.Marshal(msg)
-			if err != nil {
-				log.Println("Agent marshal error:", err)
-				continue
-			}
-			a.conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
-			if err := a.conn.WriteMessage(websocket.TextMessage, data); err != nil {
-				log.Println("Agent write error:", err)
-				return
-			}
-		case <-ticker.C:
-			// 定期发送 Ping 消息
-			a.conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
-			if err := a.conn.WriteMessage(websocket.PingMessage, []byte("ping")); err != nil {
-				log.Println("Agent ping error:", err)
-				return
-			}
+		msg, ok := <-a.send
+		if !ok {
+			_ = a.conn.WriteMessage(websocket.CloseMessage, []byte{})
+			return
+		}
+		//_ = a.conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
+		if err := a.conn.WriteMessage(websocket.TextMessage, msg); err != nil {
+			log.Println("Agent write error:", err)
+			return
 		}
 	}
 }
@@ -141,29 +105,33 @@ type RelaySession struct {
 
 // 前端读循环，将消息转发给 agent
 func (s *RelaySession) clientReadLoop() {
-	// 设置读截止时间及 PongHandler
-	s.client.conn.SetReadDeadline(time.Now().Add(60 * time.Second))
-	s.client.conn.SetPongHandler(func(appData string) error {
-		s.client.conn.SetReadDeadline(time.Now().Add(60 * time.Second))
-		return nil
-	})
 	defer s.cleanup()
 	for {
-		_, data, err := s.client.conn.ReadMessage()
+		msgType, data, err := s.client.conn.ReadMessage()
 		if err != nil {
 			log.Println("Client read error:", err)
 			break
 		}
+		// 只处理文本消息
+		if msgType != websocket.TextMessage {
+			continue
+		}
+
+		if strings.TrimSpace(string(data)) == "ping" {
+			s.client.send <- []byte(MessageTypePong)
+			_ = s.client.conn.SetReadDeadline(time.Now().Add(30 * time.Second))
+			continue
+		}
+
 		var msg WebSocketMessage
 		if err := json.Unmarshal(data, &msg); err != nil {
 			log.Println("Client unmarshal error:", err)
 			continue
 		}
-		// 此处不再处理应用层的 ping/pong，由底层自动完成
 		// 转发其他消息给 agent
 		s.mu.Lock()
 		if s.agent != nil {
-			s.agent.send <- &msg
+			s.agent.send <- data
 		} else {
 			log.Println("Session", s.token, "has no agent connection")
 		}
@@ -173,27 +141,28 @@ func (s *RelaySession) clientReadLoop() {
 
 // Agent 读循环，将消息转发给前端
 func (s *RelaySession) agentReadLoop() {
-	// 设置读截止时间及 PongHandler
-	s.agent.conn.SetReadDeadline(time.Now().Add(60 * time.Second))
-	s.agent.conn.SetPongHandler(func(appData string) error {
-		s.agent.conn.SetReadDeadline(time.Now().Add(60 * time.Second))
-		return nil
-	})
 	defer s.cleanup()
 	for {
-		_, data, err := s.agent.conn.ReadMessage()
+		msgType, data, err := s.agent.conn.ReadMessage()
 		if err != nil {
 			log.Println("Agent read error:", err)
 			break
 		}
-		var msg WebSocketMessage
-		if err := json.Unmarshal(data, &msg); err != nil {
-			log.Println("Agent unmarshal error:", err)
+		// 只处理文本消息
+		if msgType != websocket.TextMessage {
 			continue
 		}
+
+		// 如果接收到的是纯字符串 "ping"
+		if strings.TrimSpace(string(data)) == "ping" {
+			s.agent.send <- []byte(MessageTypePong)
+			_ = s.agent.conn.SetReadDeadline(time.Now().Add(30 * time.Second))
+			continue
+		}
+
 		s.mu.Lock()
 		if s.client != nil {
-			s.client.send <- &msg
+			s.client.send <- data
 		} else {
 			log.Println("Session", s.token, "has no client connection")
 		}
@@ -262,28 +231,31 @@ func HandleConnection(c echo.Context) error {
 
 	// 升级前端 WS 连接
 	clientConn, err := upgrader.Upgrade(c.Response(), c.Request(), nil)
-
 	if err != nil {
 		log.Println("Client upgrade error:", err)
 		return err
 	}
 
+	// 设置读取超时为 30 秒
+	_ = clientConn.SetReadDeadline(time.Now().Add(30 * time.Second))
 	client := &wsClientConn{
 		conn: clientConn,
-		send: make(chan *WebSocketMessage, 1000),
+		send: make(chan []byte, 1000),
 	}
 
 	// 根据 token 主动拨号建立与远程 Agent 的 WS 连接
-	remoteAgentURL := "ws://127.0.0.1:8888/ws"
+	remoteAgentURL := "ws://172.24.65.130:8888/api/v1/ws/stream"
 	agentConn, _, err := websocket.DefaultDialer.Dial(remoteAgentURL, nil)
 	if err != nil {
 		log.Println("Dial remote agent error:", err)
 		clientConn.Close()
 		return err
 	}
+
+	_ = agentConn.SetReadDeadline(time.Now().Add(30 * time.Second))
 	agent := &wsAgentConn{
 		conn: agentConn,
-		send: make(chan *WebSocketMessage, 1000),
+		send: make(chan []byte, 1000),
 	}
 
 	// 将前端和 Agent 连接保存到同一 RelaySession 中
