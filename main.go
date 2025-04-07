@@ -98,9 +98,29 @@ func (a *wsAgentConn) writePump() {
 
 type RelaySession struct {
 	token  string
+	url    string
 	client *wsClientConn
 	agent  *wsAgentConn
 	mu     sync.Mutex // 保护 client 与 agent 的设置
+	once   sync.Once  // 确保 cleanup 只执行一次
+}
+
+func (s *RelaySession) handleLocal(msg WebSocketMessage) {
+	// 例如：根据 msg.Data 做一些本地计算或查询，然后返回处理结果
+	log.Println("Processing local event:", msg)
+	response := WebSocketMessage{
+		Type: MessageTypeResponse,
+		// 可选：可以设置 RequestID 以便前端关联请求
+		RequestID: msg.RequestID,
+		Data:      fmt.Sprintf("Local processing result for data: %v", msg.Data),
+	}
+	respData, err := json.Marshal(response)
+	if err != nil {
+		log.Println("Local event marshal error:", err)
+		return
+	}
+	// 直接回复前端
+	s.client.send <- respData
 }
 
 // 前端读循环，将消息转发给 agent
@@ -128,26 +148,83 @@ func (s *RelaySession) clientReadLoop() {
 			log.Println("Client unmarshal error:", err)
 			continue
 		}
-		// 转发其他消息给 agent
-		s.mu.Lock()
-		if s.agent != nil {
-			s.agent.send <- data
-		} else {
-			log.Println("Session", s.token, "has no agent connection")
+		// 根据 msg.Action 判断事件类型
+		switch msg.Action {
+		case "local":
+			// 本地事件，直接在当前服务内处理，不转发给远程 agent
+			s.handleLocal(msg)
+		case "remote":
+			// 远程事件，继续转发
+			fallthrough
+		default:
+			// 默认认为是需要转发给远程 agent 的消息
+			s.mu.Lock()
+			if s.agent != nil {
+				s.agent.send <- data
+			} else {
+				log.Println("Session", s.token, "has no agent connection")
+			}
+			s.mu.Unlock()
 		}
-		s.mu.Unlock()
 	}
 }
 
 // Agent 读循环，将消息转发给前端
 func (s *RelaySession) agentReadLoop() {
-	defer s.cleanup()
+	//defer s.cleanup()
+	retryCount := 0
 	for {
 		msgType, data, err := s.agent.conn.ReadMessage()
 		if err != nil {
 			log.Println("Agent read error:", err)
-			break
+			retryCount++
+			if retryCount > 3 {
+
+				// 超过 3 次重试失败，发送通知消息给前端，告知退出
+				notify := WebSocketMessage{
+					Type:   MessageTypeNotify,
+					Action: "exit",
+					Data:   "Agent connection lost after 3 retries",
+				}
+				notifyData, _ := json.Marshal(notify)
+				s.mu.Lock()
+				if s.client != nil {
+					log.Println("Session", s.token, "has no agent connection")
+					s.client.send <- notifyData
+				}
+				s.mu.Unlock()
+				// 等待一段时间，让通知消息有机会发送
+				time.Sleep(1 * time.Second)
+				// 手动 cleanup，关闭连接
+				s.cleanup()
+				return
+			}
+			log.Printf("Attempting to reconnect agent, attempt %d\n", retryCount)
+			// 重试前延时 3 秒
+			time.Sleep(3 * time.Second)
+			newConn, _, err := websocket.DefaultDialer.Dial(s.url, nil)
+			if err != nil {
+				log.Println("Reconnect dial remote agent error:", err)
+				continue // 本次重试失败，进入下一次循环
+			}
+			// 设置新连接的读取超时
+			_ = newConn.SetReadDeadline(time.Now().Add(30 * time.Second))
+			newAgent := &wsAgentConn{
+				conn: newConn,
+				send: make(chan []byte, 1000),
+			}
+			// 启动新连接的写循环
+			go newAgent.writePump()
+			// 替换当前的 Agent 连接
+			s.mu.Lock()
+			s.agent = newAgent
+			s.mu.Unlock()
+			// 重连成功后重置重试计数器，继续读取消息
+			//retryCount = 0
+			continue
 		}
+		// 如果正常读取到消息，则重试计数器清零
+		retryCount = 0
 		// 只处理文本消息
 		if msgType != websocket.TextMessage {
 			continue
@@ -172,15 +249,47 @@ func (s *RelaySession) agentReadLoop() {
 
 // cleanup 关闭本会话所有连接，并从 Hub 中移除该会话
 func (s *RelaySession) cleanup() {
+	s.once.Do(func() {
+		s.mu.Lock()
+		if s.client != nil {
+			s.client.conn.Close()
+			s.client = nil
+		}
+		if s.agent != nil {
+			s.agent.conn.Close()
+			s.agent = nil
+		}
+		s.mu.Unlock()
+		relayHub.removeSession(s.token)
+	})
+}
+
+// cleanupClient 只清理前端连接，不影响 Agent 连接
+func (s *RelaySession) cleanupClient() {
 	s.mu.Lock()
 	if s.client != nil {
 		s.client.conn.Close()
+		s.client = nil
 	}
-	if s.agent != nil {
-		s.agent.conn.Close()
+	// 如果前端和 Agent 都为空，则移除整个会话
+	if s.client == nil && s.agent == nil {
+		relayHub.removeSession(s.token)
 	}
 	s.mu.Unlock()
-	relayHub.removeSession(s.token)
+}
+
+// cleanupAgent 只清理 Agent 连接，不影响前端连接
+func (s *RelaySession) cleanupAgent() {
+	s.mu.Lock()
+	if s.agent != nil {
+		s.agent.conn.Close()
+		s.agent = nil
+	}
+	// 如果前端和 Agent 都为空，则移除整个会话
+	if s.client == nil && s.agent == nil {
+		relayHub.removeSession(s.token)
+	}
+	s.mu.Unlock()
 }
 
 // -----------------------
@@ -237,14 +346,15 @@ func HandleConnection(c echo.Context) error {
 	}
 
 	// 设置读取超时为 30 秒
-	_ = clientConn.SetReadDeadline(time.Now().Add(30 * time.Second))
+	//_ = clientConn.SetReadDeadline(time.Now().Add(30 * time.Second))
 	client := &wsClientConn{
 		conn: clientConn,
 		send: make(chan []byte, 1000),
 	}
 
-	// 根据 token 主动拨号建立与远程 Agent 的 WS 连接
-	remoteAgentURL := "ws://172.24.65.130:8888/api/v1/ws/stream"
+	// 建立与远程 Agent 的 WS 连接
+	//remoteAgentURL := "ws://172.24.65.130:8888/api/v1/ws/stream"
+	remoteAgentURL := "ws://127.0.0.1:8888/ws"
 	agentConn, _, err := websocket.DefaultDialer.Dial(remoteAgentURL, nil)
 	if err != nil {
 		log.Println("Dial remote agent error:", err)
@@ -252,7 +362,7 @@ func HandleConnection(c echo.Context) error {
 		return err
 	}
 
-	_ = agentConn.SetReadDeadline(time.Now().Add(30 * time.Second))
+	_ = agentConn.SetReadDeadline(time.Now().Add(5 * time.Second))
 	agent := &wsAgentConn{
 		conn: agentConn,
 		send: make(chan []byte, 1000),
@@ -261,6 +371,7 @@ func HandleConnection(c echo.Context) error {
 	// 将前端和 Agent 连接保存到同一 RelaySession 中
 	session := relayHub.getSession(token)
 	session.mu.Lock()
+	session.url = remoteAgentURL
 	session.client = client
 	session.agent = agent
 	session.mu.Unlock()
