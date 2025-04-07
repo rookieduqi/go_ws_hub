@@ -19,10 +19,6 @@ func (r *WsReader) Read(p []byte) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	// 如果数据最后没有换行符，则追加一个换行符
-	//if len(msg) > 0 && msg[len(msg)-1] != '\n' {
-	//	msg = append(msg, '\n')
-	//}
 	n := copy(p, msg)
 	return n, nil
 }
@@ -170,7 +166,7 @@ func TerminalHandler(c echo.Context) error {
 
 func main() {
 	e := echo.New()
-	e.GET("/terminal", TerminalHandler)
+	e.GET("/term", TerminalHandler)
 	log.Println("Server started on :8080")
 	if err := e.Start(":8080"); err != nil {
 		log.Fatalf("Echo server error: %v", err)
