@@ -441,7 +441,7 @@ func HandleConnection(c echo.Context) error {
 	}
 
 	// 建立与远程 Agent 的 WS 连接
-	remoteAgentURL := "term2://127.0.0.1:8888/term2"
+	remoteAgentURL := "ws://127.0.0.1:8888/ws"
 	agentConn, _, err := websocket.DefaultDialer.Dial(remoteAgentURL, nil)
 	if err != nil {
 		log.Println("Dial remote agent error:", err)
@@ -477,7 +477,7 @@ func HandleConnection(c echo.Context) error {
 
 func main() {
 	e := echo.New()
-	e.GET("/term2", HandleConnection)
+	e.GET("/ws", HandleConnection)
 	log.Println("Relay server running on :8080")
 	if err := e.Start(":8080"); err != nil {
 		log.Fatal("Server run error:", err)

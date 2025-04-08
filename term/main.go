@@ -109,7 +109,7 @@ func ReleaseSSHResources(client *ssh.Client, session *ssh.Session) {
 // wsSSHHandler 处理 WebSocket 连接，并通过 SSH 与远程服务器交互
 func wsSSHHandler(c echo.Context) error {
 	// 升级 HTTP 为 WebSocket 连接
-	//out := &WsOut{}
+	out := &WsOut{}
 	ws, err := upgrader.Upgrade(c.Response(), c.Request(), nil)
 	if err != nil {
 		log.Println("WebSocket upgrade error:", err)
@@ -162,7 +162,11 @@ func wsSSHHandler(c echo.Context) error {
 		ssh.ECHO: 1,
 	}
 	if err := session.RequestPty("xterm", 40, 80, modes); err != nil {
-		_ = ws.WriteMessage(websocket.TextMessage, []byte("Request pty error: "+err.Error()))
+		out.Code = http.StatusBadRequest
+		out.Message = "ssh连接获取失败"
+
+		message, _ := json.Marshal(&out)
+		_ = ws.WriteMessage(websocket.BinaryMessage, message)
 		log.Println("Request pty error:", err)
 		ws.Close()
 		return err
@@ -177,7 +181,10 @@ func wsSSHHandler(c echo.Context) error {
 
 	// 启动交互式 shell
 	if err := session.Shell(); err != nil {
-		_ = ws.WriteMessage(websocket.TextMessage, []byte("Shell start error: "+err.Error()))
+		out.Code = http.StatusBadRequest
+		out.Message = "shell终端打开失败"
+		message, _ := json.Marshal(&out)
+		_ = ws.WriteMessage(websocket.BinaryMessage, message)
 		log.Println("Shell start error:", err)
 		ws.Close()
 		return err
