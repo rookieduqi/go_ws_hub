@@ -1,4 +1,4 @@
-package main
+package term
 
 import (
 	"context"
@@ -73,19 +73,19 @@ type WsWriter struct {
 	Session *ssh.Session
 }
 
-func (w *WsWriter) Write(b []byte) (int, error) {
-	wsWriter, err := w.Conn.NextWriter(websocket.BinaryMessage)
-	if err != nil {
-		slog.Info("websocket write fail: " + err.Error())
-		return 0, err
+func (p *WsWriter) Write(b []byte) (n int, err error) {
+	w, wErr := p.Conn.NextWriter(websocket.BinaryMessage)
+	if wErr != nil {
+		slog.Info("websocket write fail: " + wErr.Error())
+		return 0, wErr
 	}
-	n, err := wsWriter.Write(b)
-	closeErr := wsWriter.Close()
-	if closeErr != nil && closeErr.Error() != "EOF" {
-		slog.Warn("websocket write close fail: " + closeErr.Error())
-	}
-	slog.Info("write complete", "bytes", n)
-	return n, err
+	defer func(w io.WriteCloser) {
+		cErr := w.Close()
+		if cErr != nil && cErr.Error() != "EOF" {
+			slog.Warn("websocket write close fail: " + cErr.Error())
+		}
+	}(w)
+	return w.Write(b)
 }
 
 var upgrader = websocket.Upgrader{
@@ -106,11 +106,17 @@ func ReleaseSSHResources(client *ssh.Client, session *ssh.Session) {
 	}
 }
 
-// wsSSHHandler 处理 WebSocket 连接，并通过 SSH 与远程服务器交互
-func wsSSHHandler(c echo.Context) error {
+// WsSSHHandler 处理 WebSocket 连接，并通过 SSH 与远程服务器交互
+func WsSSHHandler(c echo.Context) error {
 	// 升级 HTTP 为 WebSocket 连接
 	out := &WsOut{}
-	ws, err := upgrader.Upgrade(c.Response(), c.Request(), nil)
+	subprotocol := c.Request().Header.Get("Sec-WebSocket-Protocol")
+	// 你可以根据需要验证这个 subprotocol，然后在响应头中返回
+	respHeader := http.Header{}
+	if subprotocol != "" {
+		respHeader.Set("Sec-WebSocket-Protocol", subprotocol)
+	}
+	ws, err := upgrader.Upgrade(c.Response(), c.Request(), respHeader)
 	if err != nil {
 		log.Println("WebSocket upgrade error:", err)
 		return err
@@ -215,11 +221,11 @@ func wsSSHHandler(c echo.Context) error {
 	}
 }
 
-func main() {
-	e := echo.New()
-	e.GET("/term", wsSSHHandler)
-	log.Println("Server started on :8080")
-	if err := e.Start(":8080"); err != nil {
-		log.Fatal("Echo server error:", err)
-	}
-}
+//func main() {
+//	e := echo.New()
+//	e.GET("/term", wsSSHHandler)
+//	log.Println("Server started on :8089")
+//	if err := e.Start(":8089"); err != nil {
+//		log.Fatal("Echo server error:", err)
+//	}
+//}

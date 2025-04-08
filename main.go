@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"echo_demo/term"
 	"encoding/json"
 	"fmt"
 	"github.com/gorilla/websocket"
@@ -478,8 +479,9 @@ func HandleConnection(c echo.Context) error {
 func main() {
 	e := echo.New()
 	e.GET("/ws", HandleConnection)
-	log.Println("Relay server running on :8080")
-	if err := e.Start(":8080"); err != nil {
+	e.GET("/term", term.WsSSHHandler)
+	log.Println("Relay server running on :8089")
+	if err := e.Start(":8089"); err != nil {
 		log.Fatal("Server run error:", err)
 	}
 }

@@ -1,10 +1,9 @@
-package main
+package term2
 
 import (
 	"bytes"
 	"github.com/gorilla/websocket"
 	"github.com/labstack/echo/v4"
-	"github.com/labstack/echo/v4/middleware"
 	"golang.org/x/crypto/ssh"
 	"log"
 	"net/http"
@@ -211,18 +210,18 @@ func tokenMiddleware(next echo.HandlerFunc) echo.HandlerFunc {
 	}
 }
 
-func main() {
-	e := echo.New()
-	e.Use(middleware.Logger())
-	e.Use(middleware.Recover())
-
-	termGroup := e.Group("/term")
-	termGroup.Use(tokenMiddleware)
-	{
-		termGroup.GET("", TerminalHandler)
-	}
-	log.Println("Server started on :8080")
-	if err := e.Start(":8080"); err != nil {
-		log.Fatalf("Echo server error: %v", err)
-	}
-}
+//func main() {
+//	e := echo.New()
+//	e.Use(middleware.Logger())
+//	e.Use(middleware.Recover())
+//
+//	termGroup := e.Group("/term")
+//	termGroup.Use(tokenMiddleware)
+//	{
+//		termGroup.GET("", TerminalHandler)
+//	}
+//	log.Println("Server started on :8080")
+//	if err := e.Start(":8080"); err != nil {
+//		log.Fatalf("Echo server error: %v", err)
+//	}
+//}
