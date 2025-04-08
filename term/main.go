@@ -20,6 +20,12 @@ type ResizeData struct {
 	H int    `json:"h"`
 }
 
+type WsOut struct {
+	Code    int64  `json:"code"`
+	Data    any    `json:"data"`
+	Message string `json:"msg"`
+}
+
 // WsReader 从 WebSocket 读取数据，实现 io.Reader 接口
 type WsReader struct {
 	Conn    *websocket.Conn
@@ -103,6 +109,7 @@ func ReleaseSSHResources(client *ssh.Client, session *ssh.Session) {
 // wsSSHHandler 处理 WebSocket 连接，并通过 SSH 与远程服务器交互
 func wsSSHHandler(c echo.Context) error {
 	// 升级 HTTP 为 WebSocket 连接
+	//out := &WsOut{}
 	ws, err := upgrader.Upgrade(c.Response(), c.Request(), nil)
 	if err != nil {
 		log.Println("WebSocket upgrade error:", err)
