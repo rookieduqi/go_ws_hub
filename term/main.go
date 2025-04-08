@@ -110,12 +110,16 @@ func ReleaseSSHResources(client *ssh.Client, session *ssh.Session) {
 func WsSSHHandler(c echo.Context) error {
 	// 升级 HTTP 为 WebSocket 连接
 	out := &WsOut{}
-	subprotocol := c.Request().Header.Get("Sec-WebSocket-Protocol")
-	// 你可以根据需要验证这个 subprotocol，然后在响应头中返回
-	respHeader := http.Header{}
-	if subprotocol != "" {
-		respHeader.Set("Sec-WebSocket-Protocol", subprotocol)
+	// 验证这个 token，然后在响应头中返回
+	token := c.Request().Header.Get("Sec-WebSocket-Protocol")
+	if token == "" {
+		log.Println("token is empty")
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "missing token"})
 	}
+	respHeader := http.Header{
+		"Sec-WebSocket-Protocol": []string{token},
+	}
+
 	ws, err := upgrader.Upgrade(c.Response(), c.Request(), respHeader)
 	if err != nil {
 		log.Println("WebSocket upgrade error:", err)
@@ -199,18 +203,22 @@ func WsSSHHandler(c echo.Context) error {
 	// 使用 done 通道等待 SSH 会话结束
 	done := make(chan error, 1)
 	go func() {
+		slog.Info("session.Wait() session exited")
 		done <- session.Wait()
+		slog.Info("session.Wait1() session exited")
 	}()
 
 	// 选择等待 SSH 会话结束或 WebSocket 关闭
 	select {
 	case err := <-done:
+		slog.Info("session.Wait() session done")
 		if err != nil {
 			log.Println("SSH session ended with error:", err)
 		}
 		ws.Close()
 		return err
 	case <-ctx.Done():
+		slog.Info("WS session done")
 		// WebSocket 关闭，向 SSH 发送 SIGINT 尝试中断会话
 		if err := session.Signal(ssh.SIGINT); err != nil {
 			log.Println("Failed to signal SSH session:", err)

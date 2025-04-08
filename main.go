@@ -402,15 +402,18 @@ var relayHub = NewRelayHub()
 // -----------------------
 
 func HandleConnection(c echo.Context) error {
-	// 从请求头获取 token
-	token := c.Request().Header.Get("token")
+	// 验证这个 token，然后在响应头中返回
+	token := c.Request().Header.Get("Sec-WebSocket-Protocol")
 	if token == "" {
 		log.Println("token is empty")
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "missing token"})
 	}
+	respHeader := http.Header{
+		"Sec-WebSocket-Protocol": []string{token},
+	}
 
 	// 升级前端 WS 连接
-	clientConn, err := upgrader.Upgrade(c.Response(), c.Request(), nil)
+	clientConn, err := upgrader.Upgrade(c.Response(), c.Request(), respHeader)
 	if err != nil {
 		log.Println("Client upgrade error:", err)
 		return err
