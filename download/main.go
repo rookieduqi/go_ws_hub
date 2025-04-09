@@ -1,4 +1,4 @@
-package main
+package download
 
 import (
 	"fmt"
@@ -10,7 +10,6 @@ import (
 	"path"
 
 	"github.com/labstack/echo/v4"
-	"github.com/labstack/echo/v4/middleware"
 	"github.com/pkg/sftp"
 	"golang.org/x/crypto/ssh"
 )
@@ -91,20 +90,20 @@ func DownloadSftpHandler(c echo.Context) error {
 	return nil
 }
 
-func main() {
-	e := echo.New()
-	e.Use(middleware.Logger())
-	e.Use(middleware.Recover())
-
-	// 前端可以调用类似如下接口进行下载：
-	// http://localhost:8080/download?filepath=/remote/path/to/file.txt
-	fileGroup := e.Group("file")
-	{
-		fileGroup.GET("/download", DownloadSftpHandler)
-	}
-
-	log.Println("服务器启动于 :8080")
-	if err := e.Start(":8080"); err != nil {
-		log.Fatalf("服务器启动失败：%v", err)
-	}
-}
+//func main() {
+//	e := echo.New()
+//	e.Use(middleware.Logger())
+//	e.Use(middleware.Recover())
+//
+//	// 前端可以调用类似如下接口进行下载：
+//	// http://localhost:8080/download?filepath=/remote/path/to/file.txt
+//	fileGroup := e.Group("file")
+//	{
+//		fileGroup.GET("/download", DownloadSftpHandler)
+//	}
+//
+//	log.Println("服务器启动于 :8080")
+//	if err := e.Start(":8080"); err != nil {
+//		log.Fatalf("服务器启动失败：%v", err)
+//	}
+//}

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"echo_demo/download"
 	"echo_demo/term"
 	"encoding/json"
 	"fmt"
@@ -445,7 +446,8 @@ func HandleConnection(c echo.Context) error {
 	}
 
 	// 建立与远程 Agent 的 WS 连接
-	remoteAgentURL := "ws://127.0.0.1:8888/ws"
+	remoteAgentURL := fmt.Sprintf("ws://%s:8888/api/ws/stream", "39.98.44.36")
+	//remoteAgentURL := "ws://127.0.0.1:8888/ws"
 	agentConn, _, err := websocket.DefaultDialer.Dial(remoteAgentURL, nil)
 	if err != nil {
 		log.Println("Dial remote agent error:", err)
@@ -483,6 +485,12 @@ func main() {
 	e := echo.New()
 	e.GET("/ws", HandleConnection)
 	e.GET("/term", term.WsSSHHandler)
+
+	fileGroup := e.Group("file")
+	{
+		fileGroup.GET("/download", download.DownloadSftpHandler)
+	}
+
 	log.Println("Relay server running on :8089")
 	if err := e.Start(":8089"); err != nil {
 		log.Fatal("Server run error:", err)

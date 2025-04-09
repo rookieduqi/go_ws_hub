@@ -200,32 +200,28 @@ func WsSSHHandler(c echo.Context) error {
 		return err
 	}
 
-	// 使用 done 通道等待 SSH 会话结束
-	done := make(chan error, 1)
+	// 在一个新的 goroutine 中调用 session.Wait()
 	go func() {
-		slog.Info("session.Wait() session exited")
-		done <- session.Wait()
-		slog.Info("session.Wait1() session exited")
+		waitErr := session.Wait()
+		if waitErr != nil {
+			slog.Info("session wait error:", waitErr)
+		}
 	}()
 
-	// 选择等待 SSH 会话结束或 WebSocket 关闭
-	select {
-	case err := <-done:
-		slog.Info("session.Wait() session done")
-		if err != nil {
-			log.Println("SSH session ended with error:", err)
+	// 在主 goroutine 中监听 WebSocket 连接关闭事件
+	for {
+		select {
+		case <-ctx.Done():
+			// WebSocket 连接已关闭，中断 session.Wait()
+			sigErr := session.Signal(ssh.SIGINT)
+			if sigErr != nil {
+				break
+			}
+			break
+		default:
+			// 继续等待
+			time.Sleep(time.Millisecond * 100)
 		}
-		ws.Close()
-		return err
-	case <-ctx.Done():
-		slog.Info("WS session done")
-		// WebSocket 关闭，向 SSH 发送 SIGINT 尝试中断会话
-		if err := session.Signal(ssh.SIGINT); err != nil {
-			log.Println("Failed to signal SSH session:", err)
-			return err
-		}
-		ws.Close()
-		return nil
 	}
 }
 
