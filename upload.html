@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>分片上传测试</title>
+    <style>
+        body {
+            font-family: sans-serif;
+            margin: 20px;
+        }
+
+        #progress {
+            margin-top: 10px;
+        }
+    </style>
+</head>
+<body>
+<h1>分片上传测试</h1>
+<input type="file" id="fileInput">
+<br><br>
+<button id="uploadButton">开始上传</button>
+<div id="progress"></div>
+
+<script>
+    document.getElementById("uploadButton").addEventListener("click", function () {
+        const fileInput = document.getElementById("fileInput");
+        if (!fileInput.files || fileInput.files.length === 0) {
+            alert("请选择一个文件");
+            return;
+        }
+        const file = fileInput.files[0];
+
+        // 定义分片大小（单位：字节），例如：1MB = 1024 * 1024 字节
+        const chunkSize = 1024 * 1024;
+        const totalSize = file.size;
+        // 计算总共需要多少分片
+        const totalChunks = Math.ceil(totalSize / chunkSize);
+
+        // 简单起见，这里直接使用文件名作为文件的 hash（实际中建议使用 MD5、SHA1 或其它唯一算法）
+        const fileHash = file.name + "_" + file.lastModified;
+        // 最终存储路径（后端将文件移动到该目录），请根据实际情况修改
+        const uploadPath = "/final_upload";
+
+        let currentChunk = 0;
+        const progressDiv = document.getElementById("progress");
+        progressDiv.innerHTML = "";
+
+        // 递归上传函数
+        function uploadNextChunk() {
+            if (currentChunk >= totalChunks) {
+                progressDiv.innerHTML += "<br>所有分片上传完成！";
+                return;
+            }
+            const start = currentChunk * chunkSize;
+            const end = Math.min(start + chunkSize, totalSize);
+            const blob = file.slice(start, end);
+
+            // 构造 FormData
+            const formData = new FormData();
+            // 传入的文件字段名与后端绑定的字段相同，这里使用 "file"
+            // 可以把 blob 包装成新的 File 对象，也可以直接追加 blob 对象
+            formData.append("file", new File([blob], file.name));
+            formData.append("index", currentChunk);
+            formData.append("hash", fileHash);
+            // 本次分片实际大小
+            formData.append("size", blob.size);
+            // 约定标准分片大小为 chunkSize，
+            // 如果最后一个分片大小小于 chunkSize，后端需作特殊处理
+            formData.append("sliceSize", chunkSize);
+            formData.append("total", totalSize);
+            formData.append("name", file.name);
+            formData.append("uploadPath", uploadPath);
+            formData.append("now", Date.now());
+            formData.append("extra", "");
+
+            // 调用后端接口上传当前分片，使用 fetch 发送 POST 请求
+            fetch("http://172.24.65.29:8089/file/upload", {
+                method: "POST",
+                body: formData
+            })
+                .then(response => response.json())
+                .then(data => {
+                    progressDiv.innerHTML += `分片 ${currentChunk} 上传返回: ${JSON.stringify(data)}<br>`;
+                    console.log("分片 " + currentChunk + " 上传返回", data);
+                    currentChunk++;
+                    uploadNextChunk();
+                })
+                .catch(error => {
+                    progressDiv.innerHTML += `分片 ${currentChunk} 上传失败: ${error}<br>`;
+                    console.error("分片 " + currentChunk + " 上传失败", error);
+                });
+        }
+
+        // 开始上传
+        uploadNextChunk();
+    });
+</script>
+</body>
+</html>

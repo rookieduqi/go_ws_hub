@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>分片上传及合并测试</title>
+    <style>
+        body {
+            font-family: sans-serif;
+            padding: 20px;
+        }
+
+        #progress {
+            margin-top: 10px;
+        }
+    </style>
+</head>
+<body>
+<h1>文件分片上传及合并测试</h1>
+<input type="file" id="fileInput"/>
+<br/><br/>
+<button id="uploadButton">开始上传</button>
+<div id="progress"></div>
+
+<script>
+    document.getElementById("uploadButton").addEventListener("click", function () {
+        const fileInput = document.getElementById("fileInput");
+        if (!fileInput.files || fileInput.files.length === 0) {
+            alert("请选择一个文件");
+            return;
+        }
+        const file = fileInput.files[0];
+
+        // 分片大小（以字节为单位），例如：1MB
+        const chunkSize = 1024 * 1024;
+        const totalSize = file.size;
+        const totalChunks = Math.ceil(totalSize / chunkSize);
+
+        // 简单生成文件hash，实际建议使用更可靠的方法（如 MD5/SHA1）
+        // const fileHash = file.name + "_" + file.lastModified;
+        const fileHash = file.lastModified;
+        // 最终存储目录（后端将该目录作为最终存储位置），请根据实际情况调整
+        const uploadPath = "/home/duqi";
+
+        let currentChunk = 0;
+        const progressDiv = document.getElementById("progress");
+        progressDiv.innerHTML = "";
+
+        function uploadNextChunk() {
+            if (currentChunk < totalChunks) {
+                const start = currentChunk * chunkSize;
+                const end = Math.min(start + chunkSize, totalSize);
+                const blob = file.slice(start, end);
+                const currentChunkSize = blob.size;
+
+                // 构造上传当前分片的 FormData
+                const formData = new FormData();
+                // 将 blob 封装为 File 对象（名称可以使用原文件名）
+                formData.append("file", new File([blob], file.name));
+                formData.append("index", currentChunk);
+                formData.append("hash", fileHash);
+                formData.append("size", currentChunkSize);
+                formData.append("sliceSize", chunkSize);
+                formData.append("total", totalSize);
+                formData.append("name", file.name);
+                formData.append("uploadPath", uploadPath);
+                formData.append("now", Date.now());
+                formData.append("extra", "");
+                for (let [key, value] of formData.entries()) {
+                    console.log(key, value);
+                }
+
+                // POST 上传当前分片到后端接口，接口地址根据实际情况设置（这里假设为 /file/upload）
+                fetch("http://172.24.65.29:8888/api/transfer/upload", {
+                    method: "POST",
+                    body: formData
+                })
+                    .then(response => response.json())
+                    .then(data => {
+                        progressDiv.innerHTML += `分片 ${currentChunk} 上传返回: ${JSON.stringify(data)}<br>`;
+                        console.log("分片 " + currentChunk + " 上传返回:", data);
+                        currentChunk++;
+                        uploadNextChunk(); // 上传下一个分片
+                    })
+                    .catch(error => {
+                        progressDiv.innerHTML += `分片 ${currentChunk} 上传失败: ${error}<br>`;
+                        console.error("分片 " + currentChunk + " 上传失败:", error);
+                    });
+            } else {
+                // 所有分片上传完毕后，调用合并接口
+                progressDiv.innerHTML += `<br>所有分片上传完毕，开始合并文件...<br>`;
+                mergeChunks();
+            }
+        }
+
+        function mergeChunks() {
+            // 构造合并接口需要的 FormData 参数
+            const formData = new FormData();
+            formData.append("hash", fileHash);
+            formData.append("total", totalSize);
+            formData.append("name", file.name);
+            formData.append("uploadPath", uploadPath);
+
+            // 调用合并接口（假设 URL 为 /file/chunks）
+            fetch("http://172.24.65.29:8888/api/transfer/chunks", {
+                method: "POST",
+                body: formData
+            })
+                .then(response => response.json())
+                .then(data => {
+                    progressDiv.innerHTML += `<br>合并返回: ${JSON.stringify(data)}<br>`;
+                    console.log("合并返回:", data);
+                })
+                .catch(error => {
+                    progressDiv.innerHTML += `<br>合并失败: ${error}<br>`;
+                    console.error("合并失败:", error);
+                });
+        }
+
+        // 开始上传所有分片
+        uploadNextChunk();
+    });
+</script>
+</body>
+</html>

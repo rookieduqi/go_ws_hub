@@ -2,8 +2,7 @@ package main
 
 import (
 	"context"
-	"echo_demo/download"
-	"echo_demo/term"
+	"echo_demo/upload2"
 	"encoding/json"
 	"fmt"
 	"github.com/gorilla/websocket"
@@ -483,12 +482,13 @@ func HandleConnection(c echo.Context) error {
 
 func main() {
 	e := echo.New()
-	e.GET("/ws", HandleConnection)
-	e.GET("/term", term.WsSSHHandler)
+	//e.GET("/ws", HandleConnection)
+	//e.GET("/term", term.WsSSHHandler)
 
 	fileGroup := e.Group("file")
 	{
-		fileGroup.GET("/download", download.DownloadSftpHandler)
+		//fileGroup.GET("/download", download.DownloadSftpHandler)
+		fileGroup.POST("/upload", upload2.UploadChunkHandler)
 	}
 
 	log.Println("Relay server running on :8089")

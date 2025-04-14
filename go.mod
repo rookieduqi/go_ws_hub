@@ -6,6 +6,7 @@ require (
 	github.com/gorilla/websocket v1.5.3
 	github.com/labstack/echo/v4 v4.13.3
 	github.com/pkg/sftp v1.13.9
+	github.com/urfave/cli/v3 v3.1.1
 	golang.org/x/crypto v0.31.0
 )
 
